@@ -45,6 +45,6 @@ if __name__ == "__main__":
     main(
         snakemake.input,
         snakemake.output[0],
-        snakemake.params.get("added_fields", None),
-        snakemake.params.get("ignore_fields", None),
+        snakemake.params.get("add_columns", None),
+        snakemake.params.get("ignore_columns", None),
     )

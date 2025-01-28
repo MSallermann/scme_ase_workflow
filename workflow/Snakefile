@@ -4,7 +4,8 @@ rule aggregate_json:
     output:
         "result.csv",
     params:
-        added_columns=dict(column_name=[1, 2]),
+        add_columns=dict(column_name=[1, 2]),
+        ignore_columns=["column_name2", "column_name3"],
     script:
         workflow.source_path("scripts/aggregate.py")
 
