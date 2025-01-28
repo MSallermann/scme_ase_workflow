@@ -175,7 +175,6 @@ def main(
 
 if __name__ == "__main__":
 
-    print(snakemake.params)
     ase_params = ASERunParams(**snakemake.params["ase_params"])
 
     scme_params = snakemake.params.get("scme_params", None)
