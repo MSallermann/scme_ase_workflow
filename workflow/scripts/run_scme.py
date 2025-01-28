@@ -9,6 +9,7 @@ from ase.md.nose_hoover_chain import NoseHooverChainNVT
 from ase.constraints import FixBondLengths
 from ase.optimize import BFGS, BFGSLineSearch, FIRE2
 import json
+import numpy as np
 
 from pathlib import Path
 from typing import Optional
@@ -75,7 +76,8 @@ def write_data_to_json(atoms, path: Path):
             energy_pot=atoms.calc.energy,
             energy_kin=atoms.get_kinetic_energy(),
             energy_tot=atoms.get_total_energy(),
-            dipole=list(atoms.calc.results["dipole"]),
+            dipole=atoms.calc.results["dipole"].tolist(),
+            quadrupole=np.sum(atoms.calc.scme.quadrupole_moments, axis=0).tolist(),
         )
         json.dump(res_dict, f, indent=4)
 
