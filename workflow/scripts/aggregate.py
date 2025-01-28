@@ -11,7 +11,7 @@ def main(
     added_columns: Optional[dict] = None,
     ignore_keys: Optional[list[str]] = None,
 ):
-
+    output_path = Path(output_path)
     data = dict()
 
     for idx, ip in enumerate(input_paths):
@@ -38,7 +38,14 @@ def main(
 
     df = pd.DataFrame(data)
     with open(output_path, "w") as f:
-        df.to_csv(f)
+        if output_path.suffix == ".csv":
+            df.to_csv(f)
+        elif output_path.suffix == ".json":
+            df.to_json(f, indent=4)
+        elif output_path.suffix == ".hdf5":
+            df.to_hdf(f, key="data")
+        else:
+            raise Exception(f"{output_path.suffix} is not a valid file extension")
 
 
 if __name__ == "__main__":
