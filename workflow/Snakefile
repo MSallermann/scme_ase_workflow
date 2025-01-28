@@ -1,0 +1,32 @@
+rule aggregate_json:
+    input:
+        ["file1.json", "file2.json"],
+    output:
+        "result.csv",
+    params:
+        added_columns=dict(column_name=[1, 2]),
+    script:
+        workflow.source_path("scripts/aggregate.py")
+
+
+rule run_scme:
+    input:
+        xyz_file="",
+    output:
+        xyz_file="",
+        initial_data="",
+        final_data="",
+    threads: 1
+    params:
+        ase_params=dict(
+            method="VelocityVerlet",
+            n_iter=lambda wc: INPUT_DICT[wc.sample].n_iter,
+            fmax=0.01,
+            timestep=lambda wc: INPUT_DICT[wc.sample].dt,
+            temperature=300,
+            pbc=[False, False, False],
+            logfile="",
+        ),
+        scme_params=dict(dms=True, qms=True),
+    script:
+        workflow.source_path("scripts/run_scme.py")
