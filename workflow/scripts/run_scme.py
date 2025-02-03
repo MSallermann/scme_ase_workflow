@@ -10,6 +10,7 @@ from ase.constraints import FixBondLengths
 from ase.optimize import BFGS, BFGSLineSearch, FIRE2
 import json
 import numpy as np
+import time
 
 from pathlib import Path
 from typing import Optional
@@ -68,7 +69,7 @@ class ASERunParams(BaseModel):
     )
 
 
-def write_data_to_json(atoms, path: Path):
+def write_data_to_json(atoms, path: Path, additional_data=None):
     with open(path, "w") as f:
         res_dict = dict(
             energy_core=atoms.calc.energy_core,
@@ -80,7 +81,14 @@ def write_data_to_json(atoms, path: Path):
             energy_tot=atoms.get_total_energy(),
             dipole=atoms.calc.results["dipole"].tolist(),
             quadrupole=np.sum(atoms.calc.scme.quadrupole_moments, axis=0).tolist(),
+            box_length=list(atoms.cell.cellpar()[:3]),
+            box_volume=np.prod(atoms.cell.cellpar()[:3]),
+            n_water=int(len(atoms) / 3),
         )
+
+        if not additional_data is None:
+            res_dict.update(additional_data)
+
         json.dump(res_dict, f, indent=4)
 
 
@@ -162,13 +170,18 @@ def main(
         trajectory_obj = Trajectory(trajectory_file, mode="w", atoms=atoms)
         dyn.attach(trajectory_obj, interval=ase_params.trajectory_interval)
 
+    t_start = time.time()
     if ase_params.method in [Method.BFGS, Method.Fire]:
         dyn.run(steps=ase_params.n_iter, fmax=ase_params.fmax)
     else:
         dyn.run(steps=ase_params.n_iter)
+    t_end = time.time()
+    elapsed_time = t_end - t_start
 
     if not final_data is None:
-        write_data_to_json(atoms, final_data)
+        write_data_to_json(
+            atoms, final_data, additional_data=dict(time_seconds=elapsed_time)
+        )
 
     dyn.close()
 
