@@ -16,6 +16,9 @@ import time
 from pathlib import Path
 from typing import Optional
 
+import pyfixi
+from pyfixi.constraints import FixBondLengths
+
 import pyscme
 from pyscme.parameters import parameter_H2O
 from pyscme.scme_calculator import SCMECalculator
@@ -93,8 +96,6 @@ def write_data_to_json(atoms, path: Path, additional_data=None):
 
 
 def constrain_water(atoms):
-    import pyfixi
-    from pyfixi.constraints import FixBondLengths
 
     n_atoms = len(atoms)
     n_molecules = int(n_atoms / 3)
@@ -125,6 +126,8 @@ def main(
     trajectory_file: Optional[Path] = None,
     initial_data: Optional[Path] = None,
     final_data: Optional[Path] = None,
+    initial_dipoles: Optional[Path] = None,
+    initial_quadrupoles: Optional[Path] = None,
 ):
 
     # Read the system using ASE
@@ -169,9 +172,16 @@ def main(
             logfile=logfile,
         )
 
+    atoms.calc.calculate(atoms)
+
     if not initial_data is None:
-        atoms.calc.calculate(atoms)
         write_data_to_json(atoms, initial_data)
+
+    if not initial_dipoles is None:
+        np.save(initial_dipoles, atoms.calc.scme.dipole_moments)
+
+    if not initial_quadrupoles is None:
+        np.save(initial_quadrupoles, atoms.calc.scme.quadrupole_moments)
 
     if not trajectory_file is None:
         trajectory_obj = Trajectory(trajectory_file, mode="w", atoms=atoms)
@@ -231,4 +241,6 @@ if __name__ == "__main__":
         trajectory_file=snakemake.output.get("trajectory_file"),
         initial_data=snakemake.output.get("initial_data"),
         final_data=snakemake.output.get("final_data"),
+        initial_dipoles=snakemake.output.get("initial_dipoles"),
+        initial_quadrupoles=snakemake.output.get("initial_quadrupoles"),
     )

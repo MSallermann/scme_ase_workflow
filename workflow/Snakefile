@@ -17,7 +17,8 @@ rule run_scme:
         xyz_file="",
         initial_data="",
         final_data="",
-    threads: 1
+    resources:
+        cpus_per_task=1
     params:
         ase_params=dict(
             method="VelocityVerlet",
