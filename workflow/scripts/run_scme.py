@@ -6,7 +6,8 @@ from ase.units import Bohr, fs, Hartree
 from ase.md.verlet import VelocityVerlet
 from ase.md.langevin import Langevin
 from ase.md.nose_hoover_chain import NoseHooverChainNVT
-from ase.constraints import FixBondLengths
+from ase.md.velocitydistribution import MaxwellBoltzmannDistribution
+
 from ase.optimize import BFGS, BFGSLineSearch, FIRE2
 import json
 import numpy as np
@@ -38,7 +39,7 @@ para_dict = {
     "C6": 46.4430e0,
     "C8": 1141.7000e0,
     "C10": 33441.0000e0,
-    "scf_convcrit": 1e-12,
+    "scf_convcrit": 1e-6,
     "scf_policy": pyscme.SCFPolicy.strict,
 }
 
@@ -53,14 +54,13 @@ class Method(Enum):
 
 class ASERunParams(BaseModel):
     model_config = ConfigDict(extra="forbid")
-
     method: Method
+    interval_properties: int = 1000
     n_iter: Optional[int] = None
     timestep: float = 1
     temperature: Optional[float] = None
     fmax: Optional[float] = 0.05
     pbc: list[bool] = [True, True, False]
-    logfile: Optional[Path] = None
     trajectory_interval: int = 1
     constrain_water: bool = True
     langevin_friction: float = 0.01 / fs
@@ -93,6 +93,9 @@ def write_data_to_json(atoms, path: Path, additional_data=None):
 
 
 def constrain_water(atoms):
+    import pyfixi
+    from pyfixi.constraints import FixBondLengths
+
     n_atoms = len(atoms)
     n_molecules = int(n_atoms / 3)
 
@@ -106,7 +109,7 @@ def constrain_water(atoms):
         pairs.append([iO, iH2])
         pairs.append([iH1, iH2])
 
-    atoms.set_constraint(FixBondLengths(pairs))
+    atoms.set_constraint(FixBondLengths(pairs, tolerance=1e-6))
 
 
 def construct_calculator(atoms, para_dict):
@@ -116,6 +119,8 @@ def construct_calculator(atoms, para_dict):
 def main(
     input_xyz: Path,
     ase_params: ASERunParams,
+    logfile: Optional[Path] = None,
+    properties_file: Optional[Path] = None,
     output_xyz: Optional[Path] = None,
     trajectory_file: Optional[Path] = None,
     initial_data: Optional[Path] = None,
@@ -130,37 +135,39 @@ def main(
     atoms.set_pbc(ase_params.pbc)
     parameter_H2O.Assign_parameters_H20(atoms.calc.scme)
 
+    if ase_params.constrain_water:
+        constrain_water(atoms)
+
     dt = ase_params.timestep * fs
 
     if ase_params.method == Method.VelocityVerlet:
         dyn = VelocityVerlet(
             atoms,
             timestep=dt,
-            logfile=ase_params.logfile,
+            logfile=logfile,
         )
     elif ase_params.method == Method.BFGS:
-        dyn = BFGS(atoms, logfile=ase_params.logfile)
+        dyn = BFGS(atoms, logfile=logfile)
     elif ase_params.method == Method.Fire:
-        dyn = FIRE2(atoms, logfile=ase_params.logfile)
+        dyn = FIRE2(atoms, logfile=logfile)
     elif ase_params.method == Method.Langevin:
+        MaxwellBoltzmannDistribution(atoms, temperature_K=ase_params.temperature)
         dyn = Langevin(
             atoms,
             timestep=dt,
             temperature_K=ase_params.temperature,
             friction=ase_params.langevin_friction,
-            logfile=ase_params.logfile,
+            logfile=logfile,
         )
     elif ase_params.method == Method.NoseHoover:
+        MaxwellBoltzmannDistribution(atoms, temperature_K=ase_params.temperature)
         dyn = NoseHooverChainNVT(
             atoms,
             timestep=dt,
             temperature_K=ase_params.temperature,
-            damping=ase_params.nose_hoover_damping_factor * dt,
-            logfile=ase_params.logfile,
+            tdamp=ase_params.nose_hoover_damping_factor * dt,
+            logfile=logfile,
         )
-
-    if ase_params.constrain_water:
-        constrain_water(atoms)
 
     if not initial_data is None:
         atoms.calc.calculate(atoms)
@@ -169,6 +176,17 @@ def main(
     if not trajectory_file is None:
         trajectory_obj = Trajectory(trajectory_file, mode="w", atoms=atoms)
         dyn.attach(trajectory_obj, interval=ase_params.trajectory_interval)
+
+    if not properties_file is None:
+        from ase_extras.property_writer import PropertyWriter
+
+        writer = PropertyWriter(
+            atoms=atoms,
+            file=properties_file,
+            dyn=dyn,
+            properties=["total_energy", "temperature", "potential_energy"],
+        )
+        dyn.attach(writer.log_to_file, interval=ase_params.interval_properties)
 
     t_start = time.time()
     if ase_params.method in [Method.BFGS, Method.Fire]:
@@ -201,11 +219,14 @@ if __name__ == "__main__":
 
     input_xyz = Path(snakemake.input["xyz_file"])
 
-    pyscme.set_num_threads(snakemake.threads)
+    pyscme.set_num_threads(snakemake.resources.cpus_per_task)
+    pyfixi.set_num_threads(snakemake.resources.cpus_per_task)
 
     main(
         input_xyz=input_xyz,
         ase_params=ase_params,
+        logfile=snakemake.output.get("logfile"),
+        properties_file=snakemake.output.get("properties_file"),
         output_xyz=snakemake.output.get("xyz_file"),
         trajectory_file=snakemake.output.get("trajectory_file"),
         initial_data=snakemake.output.get("initial_data"),
