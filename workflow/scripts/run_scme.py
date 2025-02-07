@@ -128,6 +128,8 @@ def main(
     final_data: Optional[Path] = None,
     initial_dipoles: Optional[Path] = None,
     initial_quadrupoles: Optional[Path] = None,
+    final_dipoles: Optional[Path] = None,
+    final_quadrupoles: Optional[Path] = None,
 ):
 
     # Read the system using ASE
@@ -211,6 +213,12 @@ def main(
             atoms, final_data, additional_data=dict(time_seconds=elapsed_time)
         )
 
+    if not final_dipoles is None:
+        np.save(final_dipoles, atoms.calc.scme.dipole_moments)
+
+    if not final_quadrupoles is None:
+        np.save(final_quadrupoles, atoms.calc.scme.quadrupole_moments)
+
     dyn.close()
 
     if not output_xyz is None:
@@ -243,4 +251,6 @@ if __name__ == "__main__":
         final_data=snakemake.output.get("final_data"),
         initial_dipoles=snakemake.output.get("initial_dipoles"),
         initial_quadrupoles=snakemake.output.get("initial_quadrupoles"),
+        final_dipoles=snakemake.output.get("final_dipoles"),
+        final_quadrupoles=snakemake.output.get("final_quadrupoles"),
     )
