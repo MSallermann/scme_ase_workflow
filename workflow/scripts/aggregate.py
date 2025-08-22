@@ -20,7 +20,7 @@ def main(
 
         res["file"] = str(ip)
 
-        if not added_columns is None:
+        if added_columns is not None:
             for k in added_columns.keys():
                 item = added_columns[k][idx]
                 if k in data:
@@ -29,7 +29,7 @@ def main(
                     data[k] = [item]
 
         for k, v in res.items():
-            if not ignore_keys is None and k in ignore_keys:
+            if ignore_keys is not None and k in ignore_keys:
                 continue
             if k in data:
                 data[k].append(v)

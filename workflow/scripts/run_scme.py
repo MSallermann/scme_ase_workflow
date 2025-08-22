@@ -1,17 +1,19 @@
 from snakemake.script import snakemake
 
 from enum import Enum
+
+from ase import Atoms
 from ase.io import read, write, Trajectory
-from ase.units import Bohr, fs, Hartree
+from ase.units import fs
 from ase.md.verlet import VelocityVerlet
 from ase.md.langevin import Langevin
 from ase.md.nose_hoover_chain import NoseHooverChainNVT
 from ase.md.velocitydistribution import MaxwellBoltzmannDistribution
-
-from ase.optimize import BFGS, BFGSLineSearch, FIRE2
+from ase.optimize import BFGS, FIRE2
 import json
 import numpy as np
 import time
+from ase.units import Bohr, Hartree
 
 from pathlib import Path
 from typing import Optional
@@ -24,27 +26,6 @@ from pyscme.parameters import parameter_H2O
 from pyscme.scme_calculator import SCMECalculator
 
 from pydantic import BaseModel, ConfigDict
-
-
-para_dict = {
-    "te": 1.1045 / Bohr,
-    "td": 7.5548 * Bohr,
-    "Ar": 8149.63 / Hartree,
-    "Br": -0.5515,
-    "Cr": -3.4695 * Bohr,
-    "r_Br": 1.0 / Bohr,
-    "rc_Disp": 8.0 / Bohr,
-    "rc_Core": 7.5 / Bohr,
-    "rc_Elec": 9.0 / Bohr,
-    "w_rc_Elec": 2.0 / Bohr,
-    "w_rc_Disp": 2.0 / Bohr,
-    "w_rc_Core": 2.0 / Bohr,
-    "C6": 46.4430e0,
-    "C8": 1141.7000e0,
-    "C10": 33441.0000e0,
-    "scf_convcrit": 1e-6,
-    "scf_policy": pyscme.SCFPolicy.strict,
-}
 
 
 class Method(Enum):
@@ -70,6 +51,8 @@ class ASERunParams(BaseModel):
     nose_hoover_damping_factor: float = (
         100  # noose hoover damping factor as a multiple of the timestep
     )
+    box_lengths: Optional[list[float]] = None
+    scale: Optional[float] = None
 
 
 def write_data_to_json(atoms, path: Path, additional_data=None):
@@ -89,14 +72,13 @@ def write_data_to_json(atoms, path: Path, additional_data=None):
             n_water=int(len(atoms) / 3),
         )
 
-        if not additional_data is None:
+        if additional_data is not None:
             res_dict.update(additional_data)
 
         json.dump(res_dict, f, indent=4)
 
 
 def constrain_water(atoms):
-
     n_atoms = len(atoms)
     n_molecules = int(n_atoms / 3)
 
@@ -117,9 +99,17 @@ def construct_calculator(atoms, para_dict):
     return SCMECalculator(atoms=atoms, **para_dict)
 
 
+def scale_atoms(atoms: Atoms, scale: float):
+    cell_old = atoms.get_cell()
+    cell_new = cell_old * scale
+    atoms.set_cell(cell_new, scale_atoms=True)
+    return atoms
+
+
 def main(
     input_xyz: Path,
     ase_params: ASERunParams,
+    scme_params: dict,
     logfile: Optional[Path] = None,
     properties_file: Optional[Path] = None,
     output_xyz: Optional[Path] = None,
@@ -131,17 +121,23 @@ def main(
     final_dipoles: Optional[Path] = None,
     final_quadrupoles: Optional[Path] = None,
 ):
-
     # Read the system using ASE
     with open(input_xyz, "r") as f:
         atoms = read(f, format="extxyz")
 
-    atoms.calc = construct_calculator(atoms, para_dict)
-    atoms.set_pbc(ase_params.pbc)
-    parameter_H2O.Assign_parameters_H20(atoms.calc.scme)
+    if ase_params.box_lengths is not None:
+        atoms.set_cell(ase_params.box_lengths, scale_atoms=False)
 
     if ase_params.constrain_water:
         constrain_water(atoms)
+
+    if ase_params.scale is not None:
+        scale_atoms(atoms, ase_params.scale)
+        atoms.set_velocities(np.zeros((len(atoms), 3)))
+
+    atoms.calc = construct_calculator(atoms, scme_params)
+    atoms.set_pbc(ase_params.pbc)
+    parameter_H2O.Assign_parameters_H20(atoms.calc.scme)
 
     dt = ase_params.timestep * fs
 
@@ -152,8 +148,10 @@ def main(
             logfile=logfile,
         )
     elif ase_params.method == Method.BFGS:
+        atoms.set_velocities(np.zeros((len(atoms), 3)))
         dyn = BFGS(atoms, logfile=logfile)
     elif ase_params.method == Method.Fire:
+        atoms.set_velocities(np.zeros((len(atoms), 3)))
         dyn = FIRE2(atoms, logfile=logfile)
     elif ase_params.method == Method.Langevin:
         MaxwellBoltzmannDistribution(atoms, temperature_K=ase_params.temperature)
@@ -176,27 +174,27 @@ def main(
 
     atoms.calc.calculate(atoms)
 
-    if not initial_data is None:
+    if initial_data is not None:
         write_data_to_json(atoms, initial_data)
 
-    if not initial_dipoles is None:
+    if initial_dipoles is not None:
         np.save(initial_dipoles, atoms.calc.scme.dipole_moments)
 
-    if not initial_quadrupoles is None:
+    if initial_quadrupoles is not None:
         np.save(initial_quadrupoles, atoms.calc.scme.quadrupole_moments)
 
-    if not trajectory_file is None:
+    if trajectory_file is not None:
         trajectory_obj = Trajectory(trajectory_file, mode="w", atoms=atoms)
         dyn.attach(trajectory_obj, interval=ase_params.trajectory_interval)
 
-    if not properties_file is None:
+    if properties_file is not None:
         from ase_extras.property_writer import PropertyWriter
 
         writer = PropertyWriter(
             atoms=atoms,
             file=properties_file,
             dyn=dyn,
-            properties=["total_energy", "temperature", "potential_energy"],
+            properties=["nsteps", "total_energy", "temperature", "potential_energy"],
         )
         dyn.attach(writer.log_to_file, interval=ase_params.interval_properties)
 
@@ -208,32 +206,56 @@ def main(
     t_end = time.time()
     elapsed_time = t_end - t_start
 
-    if not final_data is None:
+    if final_data is not None:
         write_data_to_json(
             atoms, final_data, additional_data=dict(time_seconds=elapsed_time)
         )
 
-    if not final_dipoles is None:
+    if final_dipoles is not None:
         np.save(final_dipoles, atoms.calc.scme.dipole_moments)
 
-    if not final_quadrupoles is None:
+    if final_quadrupoles is not None:
         np.save(final_quadrupoles, atoms.calc.scme.quadrupole_moments)
 
     dyn.close()
 
-    if not output_xyz is None:
+    if output_xyz is not None:
         with open(output_xyz, "w") as f:
             write(f, atoms)
 
 
 if __name__ == "__main__":
-
     ase_params = ASERunParams(**snakemake.params["ase_params"])
 
-    scme_params = snakemake.params.get("scme_params", None)
+    default_scme_params = {
+        "dispersion": {
+            "td": 7.5548 * Bohr,
+            "rc": 8.0 / Bohr,
+            "C6_OO": 46.4430e0,
+            "C8_OO": 1141.7000e0,
+            "C10_OO": 33441.0000e0,
+        },
+        "repulsion": {
+            "Ar_OO": 8149.63 / Hartree,
+            "Br_OO": -0.5515,
+            "Cr_OO": -3.4695 * Bohr,
+            "r_Br": 1.0 / Bohr,
+            "rc": 7.5 / Bohr,
+        },
+        "electrostatic": {
+            "scf_convcrit": 1e-8,
+            "NC": [1, 2, 1],
+            "scf_policy": pyscme.SCFPolicy.strict,
+            "te": 1.2 / Bohr,
+            "max_iter_scf": 500,
+            "rc": 9.0 / Bohr,
+        },
+        "dms": False,
+        "qms": False,
+    }
 
-    if not scme_params is None:
-        para_dict.update(scme_params)
+    scme_params = snakemake.params.get("scme_params", None)
+    scme_params = default_scme_params.update(scme_params)
 
     input_xyz = Path(snakemake.input["xyz_file"])
 
@@ -243,6 +265,7 @@ if __name__ == "__main__":
     main(
         input_xyz=input_xyz,
         ase_params=ase_params,
+        scme_params=scme_params,
         logfile=snakemake.output.get("logfile"),
         properties_file=snakemake.output.get("properties_file"),
         output_xyz=snakemake.output.get("xyz_file"),
