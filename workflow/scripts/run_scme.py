@@ -227,7 +227,7 @@ def main(
 if __name__ == "__main__":
     ase_params = ASERunParams(**snakemake.params["ase_params"])
 
-    default_scme_params = {
+    scme_params = {
         "dispersion": {
             "td": 7.5548 * Bohr,
             "rc": 8.0 / Bohr,
@@ -254,8 +254,8 @@ if __name__ == "__main__":
         "qms": False,
     }
 
-    scme_params = snakemake.params.get("scme_params", None)
-    scme_params = default_scme_params.update(scme_params)
+    _scme_params = snakemake.params.get("scme_params", None)
+    scme_params.update(_scme_params)
 
     input_xyz = Path(snakemake.input["xyz_file"])
 
