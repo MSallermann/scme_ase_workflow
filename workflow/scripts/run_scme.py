@@ -137,7 +137,7 @@ def main(
 
     atoms.calc = construct_calculator(atoms, scme_params)
     atoms.set_pbc(ase_params.pbc)
-    parameter_H2O.Assign_parameters_H20(atoms.calc.scme)
+    parameter_H2O.Assign_parameters_H2O(atoms.calc.scme)
 
     dt = ase_params.timestep * fs
 
